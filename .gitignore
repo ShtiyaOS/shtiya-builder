@@ -37,4 +37,5 @@ next-env.d.ts
 
 # Json
 *.json
+!src/lib/web3/abi.json
 shtiya-builder-6494af15a32f.json
