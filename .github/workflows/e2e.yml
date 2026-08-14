@@ -1,0 +1,45 @@
+name: E2E Deal Lifecycle Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start local Supabase stack and apply migrations
+        run: |
+          supabase start
+          supabase db reset
+
+      - name: Export Supabase connection details
+        run: |
+          supabase status -o env > /tmp/supabase.env
+          {
+            echo "NEXT_PUBLIC_SUPABASE_URL=$(grep '^API_URL=' /tmp/supabase.env | cut -d= -f2- | tr -d '\"')"
+            echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=$(grep '^ANON_KEY=' /tmp/supabase.env | cut -d= -f2- | tr -d '\"')"
+            echo "SUPABASE_SERVICE_ROLE_KEY=$(grep '^SERVICE_ROLE_KEY=' /tmp/supabase.env | cut -d= -f2- | tr -d '\"')"
+          } >> "$GITHUB_ENV"
+
+      - name: Run E2E deal lifecycle test
+        run: npm run test:e2e
+
+      - name: Stop Supabase
+        if: always()
+        run: supabase stop
