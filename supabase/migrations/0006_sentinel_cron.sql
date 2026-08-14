@@ -16,7 +16,12 @@
 
 -- ── Schedule monthly sentinel run ─────────────────────────────────────────────
 -- Idempotent: unschedule first so re-running migration doesn't duplicate jobs.
-select cron.unschedule('sentinel-monthly');
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'sentinel-monthly') THEN
+        PERFORM cron.unschedule('sentinel-monthly');
+    END IF;
+END $$;
 
 select cron.schedule(
   'sentinel-monthly',      -- unique job name

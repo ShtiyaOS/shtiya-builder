@@ -30,6 +30,18 @@ language plpgsql
 security definer
 as $$
 begin
+  -- app.supabase_functions_url / app.service_role_key are project-level DB
+  -- settings configured via the Dashboard (see 0004_watchdog_cron.sql) —
+  -- they don't exist on a fresh local/CI database. current_setting()'s
+  -- second arg (missing_ok) makes that return NULL instead of raising
+  -- "unrecognized configuration parameter", which would otherwise fail
+  -- every INSERT/UPDATE on properties/agreements/documents outright. Skip
+  -- the notify silently when unconfigured — local/test envs seed
+  -- embeddings directly instead of relying on the Edge Function round trip.
+  if current_setting('app.supabase_functions_url', true) is null then
+    return NEW;
+  end if;
+
   -- Fire-and-forget: pg_net sends the HTTP request asynchronously.
   -- The Edge Function writes the embedding back within ~60 s.
   perform net.http_post(

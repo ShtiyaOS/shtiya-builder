@@ -23,7 +23,12 @@ alter publication supabase_realtime add table financial_ledgers;
 -- ── Schedule the daily watchdog poll ─────────────────────────────────────────
 -- Deletes any existing job with the same name first so re-running this
 -- migration does not create duplicate schedules.
-select cron.unschedule('watchdog-daily');
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'watchdog-daily') THEN
+        PERFORM cron.unschedule('watchdog-daily');
+    END IF;
+END $$;
 
 select cron.schedule(
   'watchdog-daily',        -- job name (must be unique)

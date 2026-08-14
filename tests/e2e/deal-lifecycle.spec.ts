@@ -24,6 +24,7 @@ import { POST as submitMaintenance } from '@/app/api/maintenance/route';
 import { seedLifecycle, type LifecycleFixture } from './helpers/seed';
 import { actAs, jsonRequest, formRequest } from './helpers/route-caller';
 import { createAnonClient } from './helpers/supabase-test-client';
+import { expectStatus, expectRlsResult } from './helpers/assertions';
 
 let ctx: LifecycleFixture;
 let agreementId: string;
@@ -47,7 +48,7 @@ describe('1. Owner block assembly (T2.1/T2.2)', () => {
         user_id: ctx.users.ownerA.user.id,
       }),
     );
-    expect(selfEnroll.status).toBe(201);
+    await expectStatus(selfEnroll, 201);
 
     actAs(ctx.users.ownerA.client);
     const inviteNeighbor = await inviteMember(
@@ -57,7 +58,7 @@ describe('1. Owner block assembly (T2.1/T2.2)', () => {
         user_id: ctx.users.ownerB.user.id,
       }),
     );
-    expect(inviteNeighbor.status).toBe(201);
+    await expectStatus(inviteNeighbor, 201);
   });
 
   it('signing both members locks the committee once target_member_count is reached', async () => {
@@ -68,8 +69,8 @@ describe('1. Owner block assembly (T2.1/T2.2)', () => {
         property_id: ctx.ids.propertyA,
       }),
     );
-    expect(signA.status).toBe(200);
-    expect((await signA.json()).locked).toBe(false);
+    const signABody = await expectStatus(signA, 200);
+    expect(signABody.locked).toBe(false);
 
     actAs(ctx.users.ownerB.client);
     const signB = await signMember(
@@ -78,8 +79,8 @@ describe('1. Owner block assembly (T2.1/T2.2)', () => {
         property_id: ctx.ids.propertyB,
       }),
     );
-    expect(signB.status).toBe(200);
-    expect((await signB.json()).locked).toBe(true);
+    const signBBody = await expectStatus(signB, 200);
+    expect(signBBody.locked).toBe(true);
 
     const { data } = await ctx.service
       .from('block_committees')
@@ -90,11 +91,11 @@ describe('1. Owner block assembly (T2.1/T2.2)', () => {
   });
 
   it('RLS: an uninvolved tenant cannot see the committee or sign on ownerB\'s behalf', async () => {
-    const { data: visible } = await ctx.users.tenant.client
+    const result = await ctx.users.tenant.client
       .from('block_committees')
       .select('*')
       .eq('id', ctx.ids.committee);
-    expect(visible).toEqual([]);
+    expectRlsResult(result, true);
 
     actAs(ctx.users.tenant.client);
     const forged = await signMember(
@@ -105,7 +106,7 @@ describe('1. Owner block assembly (T2.1/T2.2)', () => {
     );
     // block_committee_members_self_sign (0007) hides the row from the
     // tenant's UPDATE -> 0 rows matched -> PGRST116 -> route maps to 404.
-    expect(forged.status).toBe(404);
+    await expectStatus(forged, 404);
   });
 });
 
@@ -122,8 +123,7 @@ describe('2. Acquisition lead (Marketing funnel / T4.14)', () => {
         description: 'Looking for a 4-unit multifamily property in Bushwick',
       }),
     );
-    expect(res.status).toBe(201);
-    const body = await res.json();
+    const body = await expectStatus(res, 201);
     expect(body.lead_id).toBeTruthy();
     // GEMINI_API_KEY is cleared for this whole run (vitest.setup.ts) so the
     // route's embedText() short-circuits to null and no match is attempted
@@ -148,7 +148,7 @@ describe('2. Acquisition lead (Marketing funnel / T4.14)', () => {
       .from('properties')
       .update({ embedding: FIXED_VECTOR })
       .eq('id', ctx.ids.propertyA);
-    expect(embedErr).toBeNull();
+    if (embedErr) throw new Error(`Seeding embedding failed: ${JSON.stringify(embedErr)}`);
 
     const queryEmbedding = `[${FIXED_VECTOR.join(',')}]`;
 
@@ -156,17 +156,18 @@ describe('2. Acquisition lead (Marketing funnel / T4.14)', () => {
     // still correctly sees zero rows — auth.uid() is NULL, and
     // properties_owner_access (0002) grants no anonymous access.
     const anon = createAnonClient();
-    const { data: anonMatches } = await anon.rpc('match_properties', {
+    const anonResult = await anon.rpc('match_properties', {
       query_embedding: queryEmbedding,
       match_count: 1,
     });
-    expect(anonMatches ?? []).toEqual([]);
+    expectRlsResult(anonResult, true);
 
     // The service-role client bypasses RLS and finds the seeded property.
-    const { data: adminMatches } = await ctx.service.rpc('match_properties', {
+    const { data: adminMatches, error: adminErr } = await ctx.service.rpc('match_properties', {
       query_embedding: queryEmbedding,
       match_count: 1,
     });
+    if (adminErr) throw new Error(`Admin match_properties() failed: ${JSON.stringify(adminErr)}`);
     expect(adminMatches?.[0]?.id).toBe(ctx.ids.propertyA);
   });
 });
@@ -184,8 +185,7 @@ describe('3. Legal PSA execution (T3.1/T3.2)', () => {
         ],
       }),
     );
-    expect(res.status).toBe(201);
-    const body = await res.json();
+    const body = await expectStatus(res, 201);
     expect(body.agreement.status).toBe('draft');
     agreementId = body.agreement.id;
   });
@@ -195,22 +195,22 @@ describe('3. Legal PSA execution (T3.1/T3.2)', () => {
     const signAttorney = await signAgreement(
       jsonRequest('/api/agreements', 'PATCH', { agreement_id: agreementId }),
     );
-    expect(signAttorney.status).toBe(200);
-    expect((await signAttorney.json()).status).toBe('pending_signature');
+    const attorneyBody = await expectStatus(signAttorney, 200);
+    expect(attorneyBody.status).toBe('pending_signature');
 
     actAs(ctx.users.ownerA.client);
     const signOwner = await signAgreement(
       jsonRequest('/api/agreements', 'PATCH', { agreement_id: agreementId }),
     );
-    expect(signOwner.status).toBe(200);
-    expect((await signOwner.json()).status).toBe('pending_signature');
+    const ownerBody = await expectStatus(signOwner, 200);
+    expect(ownerBody.status).toBe('pending_signature');
 
     actAs(ctx.users.investor.client);
     const signInvestor = await signAgreement(
       jsonRequest('/api/agreements', 'PATCH', { agreement_id: agreementId }),
     );
-    expect(signInvestor.status).toBe(200);
-    expect((await signInvestor.json()).status).toBe('executed');
+    const investorBody = await expectStatus(signInvestor, 200);
+    expect(investorBody.status).toBe('executed');
 
     const { data } = await ctx.service
       .from('agreements')
@@ -223,8 +223,8 @@ describe('3. Legal PSA execution (T3.1/T3.2)', () => {
   });
 
   it('RLS: an uninvolved tenant cannot see the PSA at all', async () => {
-    const { data } = await ctx.users.tenant.client.from('agreements').select('*').eq('id', agreementId);
-    expect(data).toEqual([]);
+    const result = await ctx.users.tenant.client.from('agreements').select('*').eq('id', agreementId);
+    expectRlsResult(result, true);
 
     actAs(ctx.users.tenant.client);
     const forged = await signAgreement(
@@ -234,7 +234,7 @@ describe('3. Legal PSA execution (T3.1/T3.2)', () => {
     // SELECT-then-UPDATE lookup inside the route -> "not found" -> 404
     // (never reaches the party-membership 403 check, since the route can't
     // see the row to begin with).
-    expect(forged.status).toBe(404);
+    await expectStatus(forged, 404);
   });
 });
 
@@ -250,15 +250,15 @@ describe('4. Capital draw funding (T4.1/T4.2)', () => {
       })
       .select('id')
       .single();
-    expect(error).toBeNull();
+    if (error) throw new Error(`Seeding ledger failed: ${JSON.stringify(error)}`);
     ledgerId = ledger!.id;
 
     actAs(ctx.users.lender.client);
     const res = await approveDraw(
       jsonRequest('/api/draws/approve', 'POST', { ledger_id: ledgerId, action: 'hold' }),
     );
-    expect(res.status).toBe(200);
-    expect((await res.json()).status).toBe('held');
+    const body = await expectStatus(res, 200);
+    expect(body.status).toBe('held');
 
     const { data } = await ctx.service.from('financial_ledgers').select('status').eq('id', ledgerId).single();
     expect(data?.status).toBe('held');
@@ -270,10 +270,10 @@ describe('4. Capital draw funding (T4.1/T4.2)', () => {
       jsonRequest('/api/draws/approve', 'POST', { ledger_id: ledgerId, action: 'hold' }),
     );
     // App-level role check in draws/approve rejects before touching the DB.
-    expect(res.status).toBe(403);
+    await expectStatus(res, 403);
 
-    const { data } = await ctx.users.tenant.client.from('financial_ledgers').select('*').eq('id', ledgerId);
-    expect(data).toEqual([]); // T1.4-style acceptance, exercised end-to-end.
+    const result = await ctx.users.tenant.client.from('financial_ledgers').select('*').eq('id', ledgerId);
+    expectRlsResult(result, true); // T1.4-style acceptance, exercised end-to-end.
   });
 });
 
@@ -291,8 +291,7 @@ describe('5-6. Contractor milestone upload + Vision approval (T3.3-T3.5)', () =>
     form.set('property_id', ctx.ids.propertyA);
     form.set('file', new File([Buffer.from('fake-jpeg-bytes-1')], 'milestone-1.jpg', { type: 'image/jpeg' }));
     const res = await uploadMilestone(formRequest('/api/milestone-upload', form));
-    expect(res.status).toBe(201);
-    const body = await res.json();
+    const body = await expectStatus(res, 201);
 
     const { data } = await ctx.service
       .from('vision_inspections')
@@ -312,8 +311,7 @@ describe('7. Escrow release (T3.6/T3.7)', () => {
         recipient: '0x000000000000000000000000000000000000dEaD',
       }),
     );
-    expect(res.status).toBe(409);
-    const body = await res.json();
+    const body = await expectStatus(res, 409);
     expect(body.blocks_draw).toBe(true);
 
     const { data } = await ctx.service.from('financial_ledgers').select('status').eq('id', ledgerId).single();
@@ -333,7 +331,7 @@ describe('7. Escrow release (T3.6/T3.7)', () => {
     form.set('property_id', ctx.ids.propertyA);
     form.set('file', new File([Buffer.from('fake-jpeg-bytes-2')], 'milestone-2.jpg', { type: 'image/jpeg' }));
     const uploadRes = await uploadMilestone(formRequest('/api/milestone-upload', form));
-    expect(uploadRes.status).toBe(201);
+    await expectStatus(uploadRes, 201);
 
     actAs(ctx.users.lender.client);
     const res = await releaseEscrow(
@@ -342,8 +340,7 @@ describe('7. Escrow release (T3.6/T3.7)', () => {
         recipient: '0x000000000000000000000000000000000000dEaD',
       }),
     );
-    expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await expectStatus(res, 200);
     expect(body.status).toBe('released');
     // No Web3 env vars are configured (vitest.setup.ts) -> the route's
     // built-in DB-only fallback path issues a mock-tx-... hash.
@@ -360,16 +357,18 @@ describe('7. Escrow release (T3.6/T3.7)', () => {
 
 describe('8. Property handoff (T4.8-T4.10)', () => {
   it('the owner can see the released ledger and executed PSA under RLS', async () => {
-    const { data: ledgerRows } = await ctx.users.ownerA.client
+    const { data: ledgerRows, error: ledgerErr } = await ctx.users.ownerA.client
       .from('financial_ledgers')
       .select('*')
       .eq('id', ledgerId);
+    if (ledgerErr) throw new Error(`Query failed: ${JSON.stringify(ledgerErr)}`);
     expect(ledgerRows?.[0]?.status).toBe('released');
 
-    const { data: agreementRows } = await ctx.users.ownerA.client
+    const { data: agreementRows, error: agreementErr } = await ctx.users.ownerA.client
       .from('agreements')
       .select('*')
       .eq('id', agreementId);
+    if (agreementErr) throw new Error(`Query failed: ${JSON.stringify(agreementErr)}`);
     expect(agreementRows?.[0]?.status).toBe('executed');
   });
 
@@ -382,16 +381,15 @@ describe('8. Property handoff (T4.8-T4.10)', () => {
         description: 'Leak under kitchen sink',
       }),
     );
-    expect(res.status).toBe(201);
-    const body = await res.json();
+    const body = await expectStatus(res, 201);
     expect(body.ticket_document_id).toBeTruthy();
     expect(body.scope_document_id).toBeTruthy();
   });
 
   it('RLS: the tenant still cannot see the PSA or the ledger (not a party, not lender/admin)', async () => {
-    const { data: agr } = await ctx.users.tenant.client.from('agreements').select('*').eq('id', agreementId);
-    expect(agr).toEqual([]);
-    const { data: led } = await ctx.users.tenant.client.from('financial_ledgers').select('*').eq('id', ledgerId);
-    expect(led).toEqual([]);
+    const agr = await ctx.users.tenant.client.from('agreements').select('*').eq('id', agreementId);
+    expectRlsResult(agr, true);
+    const led = await ctx.users.tenant.client.from('financial_ledgers').select('*').eq('id', ledgerId);
+    expectRlsResult(led, true);
   });
 });

@@ -2,9 +2,15 @@ import { vi } from 'vitest';
 import { config as loadDotenv } from 'dotenv';
 
 // Loads NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY /
-// SUPABASE_SERVICE_ROLE_KEY from .env.local for local runs. No-op in CI,
+// SUPABASE_SERVICE_ROLE_KEY from .env.test for local runs. No-op in CI,
 // where the workflow exports these into the job environment directly.
-loadDotenv({ path: '.env.local' });
+//
+// Deliberately .env.test (local Docker instance: 127.0.0.1:54321), NOT
+// .env.local — .env.local carries credentials for the hosted Supabase
+// project. This suite inserts/updates/deletes real rows as part of the
+// lifecycle narrative; pointing it at .env.local would run those mutations
+// against live project data on every test run.
+loadDotenv({ path: '.env.test' });
 
 // Deliberately unset for the whole test run — this is what makes external
 // calls deterministic and network-free:

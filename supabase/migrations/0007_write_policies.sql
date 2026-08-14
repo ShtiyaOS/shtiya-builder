@@ -39,22 +39,22 @@
 -- src/app/api) — no INSERT policy; rows are seeded directly via a
 -- service-role client (ops tooling / test fixtures).
 -- ---------------------------------------------------------------------------
+-- Uses is_block_committee_member() (0002), not a direct correlated
+-- subquery on block_committee_members — that table's own SELECT policy
+-- (block_committee_members_self) checks back into block_committees, and a
+-- plain subquery here would recreate the same cross-table 42P17 recursion
+-- current_user_role() was introduced to avoid, just spread across two
+-- tables instead of one.
 create policy "block_committees_member_update" on block_committees for update
   using (
     created_by = auth.uid()
-    or exists (
-      select 1 from block_committee_members m
-      where m.block_committee_id = block_committees.id and m.user_id = auth.uid()
-    )
-    or exists (select 1 from users u where u.id = auth.uid() and u.role = 'admin')
+    or is_block_committee_member(id)
+    or current_user_role() = 'admin'
   )
   with check (
     created_by = auth.uid()
-    or exists (
-      select 1 from block_committee_members m
-      where m.block_committee_id = block_committees.id and m.user_id = auth.uid()
-    )
-    or exists (select 1 from users u where u.id = auth.uid() and u.role = 'admin')
+    or is_block_committee_member(id)
+    or current_user_role() = 'admin'
   );
 
 -- ---------------------------------------------------------------------------
@@ -66,26 +66,19 @@ create policy "block_committees_member_update" on block_committees for update
 -- ---------------------------------------------------------------------------
 create policy "block_committee_members_insert" on block_committee_members for insert
   with check (
-    exists (
-      select 1 from block_committees c
-      where c.id = block_committee_members.block_committee_id and c.created_by = auth.uid()
-    )
-    or exists (
-      select 1 from block_committee_members m
-      where m.block_committee_id = block_committee_members.block_committee_id
-        and m.user_id = auth.uid()
-    )
-    or exists (select 1 from users u where u.id = auth.uid() and u.role = 'admin')
+    is_block_committee_creator(block_committee_id)
+    or is_block_committee_member(block_committee_id)
+    or current_user_role() = 'admin'
   );
 
 create policy "block_committee_members_self_sign" on block_committee_members for update
   using (
     user_id = auth.uid()
-    or exists (select 1 from users u where u.id = auth.uid() and u.role = 'admin')
+    or current_user_role() = 'admin'
   )
   with check (
     user_id = auth.uid()
-    or exists (select 1 from users u where u.id = auth.uid() and u.role = 'admin')
+    or current_user_role() = 'admin'
   );
 
 -- ---------------------------------------------------------------------------
@@ -101,17 +94,17 @@ create policy "block_committee_members_self_sign" on block_committee_members for
 create policy "agreements_party_insert" on agreements for insert
   with check (
     parties @> jsonb_build_array(jsonb_build_object('user_id', auth.uid()::text))
-    or exists (select 1 from users u where u.id = auth.uid() and u.role in ('attorney', 'admin'))
+    or current_user_role() in ('attorney', 'admin')
   );
 
 create policy "agreements_party_update" on agreements for update
   using (
     parties @> jsonb_build_array(jsonb_build_object('user_id', auth.uid()::text))
-    or exists (select 1 from users u where u.id = auth.uid() and u.role in ('attorney', 'admin'))
+    or current_user_role() in ('attorney', 'admin')
   )
   with check (
     parties @> jsonb_build_array(jsonb_build_object('user_id', auth.uid()::text))
-    or exists (select 1 from users u where u.id = auth.uid() and u.role in ('attorney', 'admin'))
+    or current_user_role() in ('attorney', 'admin')
   );
 
 -- ---------------------------------------------------------------------------
@@ -122,8 +115,8 @@ create policy "agreements_party_update" on agreements for update
 -- has no equivalent app-level check today.
 -- ---------------------------------------------------------------------------
 create policy "financial_ledgers_lender_update" on financial_ledgers for update
-  using (exists (select 1 from users u where u.id = auth.uid() and u.role in ('lender', 'admin')))
-  with check (exists (select 1 from users u where u.id = auth.uid() and u.role in ('lender', 'admin')));
+  using (current_user_role() in ('lender', 'admin'))
+  with check (current_user_role() in ('lender', 'admin'));
 
 -- ---------------------------------------------------------------------------
 -- DOCUMENTS: INSERT
@@ -159,16 +152,13 @@ create policy "deal_room_events_insert_committee" on deal_room_events for insert
   with check (
     block_committee_id is not null
     and (
-      exists (
-        select 1 from block_committee_members m
-        where m.block_committee_id = deal_room_events.block_committee_id and m.user_id = auth.uid()
-      )
-      or exists (select 1 from users u where u.id = auth.uid() and u.role = 'admin')
+      is_block_committee_member(block_committee_id)
+      or current_user_role() = 'admin'
     )
   );
 
 create policy "deal_room_events_insert_ledger" on deal_room_events for insert
   with check (
     financial_ledger_id is not null
-    and exists (select 1 from users u where u.id = auth.uid() and u.role in ('lender', 'admin'))
+    and current_user_role() in ('lender', 'admin')
   );

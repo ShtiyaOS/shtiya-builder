@@ -1,5 +1,4 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 
 export const runtime = 'nodejs';
@@ -66,10 +65,12 @@ async function embedText(text: string): Promise<number[] | null> {
 }
 
 export async function POST(request: NextRequest) {
-  const supabase = await createClient();
-
-  // Leads endpoint is public — no auth required (marketing funnel).
-  // We still create a server client so RLS applies to any DB reads.
+  // Leads endpoint is public — no auth required (marketing funnel). Both
+  // the match lookup (step 2) and the persist (step 3) use the service-role
+  // admin client — see the comment on the documents insert below for why
+  // an RLS-scoped client can't be used for the write either, despite
+  // documents_insert_public_lead (0007) permitting the INSERT itself.
+  const admin = createAdminClient();
 
   let body: Record<string, unknown>;
   try {
@@ -114,9 +115,7 @@ export async function POST(request: NextRequest) {
       // normal RLS-scoped client would always get zero rows from
       // properties_owner_access regardless of similarity. Use the
       // service-role admin client here specifically to bypass RLS for this
-      // lookup; the lead itself is still stored via the regular RLS-scoped
-      // client below (documents_insert_public_lead, added in 0007).
-      const admin = createAdminClient();
+      // lookup.
       const { data: matchRows } = await admin.rpc('match_properties', {
         query_embedding: vectorLiteral,
         match_count: 1,
@@ -135,10 +134,18 @@ export async function POST(request: NextRequest) {
   }
 
   // ── 3. Persist the lead ───────────────────────────────────────────────────
+  // documents_insert_public_lead (0007) does authorize this INSERT for the
+  // anon-key RLS-scoped client, but PostgREST's `.select().single()` also
+  // requires documents_scoped_access (the table's SELECT policy) to permit
+  // reading the row back for RETURNING — and it deliberately doesn't grant
+  // anonymous callers general SELECT on `documents`. Widening that policy
+  // instead would let any anonymous caller enumerate every prior lead's
+  // name/email/phone via `GET /rest/v1/documents?type=eq.lead`. Using the
+  // admin client here avoids that trade-off entirely.
   const encoded  = Buffer.from(JSON.stringify(leadPayload)).toString('base64');
   const leadPath = `meta:${encoded}`;
 
-  const { data: doc, error: docErr } = await supabase
+  const { data: doc, error: docErr } = await admin
     .from('documents')
     .insert({
       property_id:  leadPayload.related_property_id ?? null,

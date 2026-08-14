@@ -125,13 +125,21 @@ export async function seedLifecycle(): Promise<LifecycleFixture> {
         }
       });
       await safely(() => service.from('vision_inspections').delete().in('property_id', ids));
+      await safely(() => service.from('financial_ledgers').delete().in('property_id', ids));
+      // agreements MUST be deleted before documents, not after — agreements
+      // rows carry a document_id FK into documents (fk_agreements_document,
+      // 0001), pointing at the PSA placeholder doc POST /api/agreements
+      // creates for each deal. Deleting documents first (the previous
+      // order) makes that batch DELETE violate the FK; since it's wrapped
+      // in safely(), the failure was silent, leaving every run's
+      // property-scoped documents — and the users referenced by their
+      // uploaded_by FK — permanently orphaned instead of cleaned up.
+      await safely(() => service.from('agreements').delete().in('property_id', ids));
       await safely(() => service.from('documents').delete().in('property_id', ids));
       // The anonymous lead document has property_id = null and can't be
       // scoped by property — scope by run instead via the email in its
       // (base64-encoded) payload isn't queryable, so leads created by this
       // run are left for manual/periodic cleanup; they're inert test data.
-      await safely(() => service.from('financial_ledgers').delete().in('property_id', ids));
-      await safely(() => service.from('agreements').delete().in('property_id', ids));
       await safely(() => service.from('block_committee_members').delete().eq('block_committee_id', committee.id));
       await safely(() => service.from('block_committees').delete().eq('id', committee.id));
       await safely(() => service.from('properties').delete().in('id', ids));
