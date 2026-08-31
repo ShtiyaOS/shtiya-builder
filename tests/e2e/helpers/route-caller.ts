@@ -42,3 +42,8 @@ export function jsonRequest(url: string, method: 'POST' | 'PATCH', body: unknown
 export function formRequest(url: string, form: FormData): NextRequest {
   return new NextRequest(`http://localhost${url}`, { method: 'POST', body: form });
 }
+
+/** Builds a GET NextRequest (used by /api/vision-inspections?id=...). */
+export function getRequest(url: string): NextRequest {
+  return new NextRequest(`http://localhost${url}`, { method: 'GET' });
+}

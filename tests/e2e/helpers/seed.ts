@@ -97,6 +97,22 @@ export async function seedLifecycle(): Promise<LifecycleFixture> {
     .single();
   if (committeeErr || !committee) throw new Error(`seed committee failed: ${committeeErr?.message}`);
 
+  // Insert ownerA as a signed member of the committee so that the
+  // deal_room_events_member_access RLS policy passes for their session.
+  // The policy checks is_block_committee_member() — which queries
+  // block_committee_members — not created_by on block_committees, so
+  // the creator must have an explicit membership row or Realtime's
+  // CDC-RLS evaluator will reject their authenticated subscription.
+  const { error: memberErr } = await service
+    .from('block_committee_members')
+    .insert({
+      block_committee_id: committee.id,
+      property_id: propertyA.id,
+      user_id: users.ownerA.user.id,
+      status: 'signed',
+    });
+  if (memberErr) throw new Error(`seed committee member failed: ${memberErr.message}`);
+
   return {
     service,
     runId,

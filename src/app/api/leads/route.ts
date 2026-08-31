@@ -123,8 +123,10 @@ export async function POST(request: NextRequest) {
 
       if (matchRows && (matchRows as { id: string; score: number }[]).length > 0) {
         const top = (matchRows as { id: string; score: number }[])[0];
-        leadPayload.related_property_id = top.id;
-        leadPayload.match_score = top.score;
+        if (top) {
+          leadPayload.related_property_id = top.id;
+          leadPayload.match_score = top.score;
+        }
       }
     } catch (err) {
       // Match enrichment is best-effort (e.g. SUPABASE_SERVICE_ROLE_KEY not

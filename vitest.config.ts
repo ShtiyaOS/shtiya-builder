@@ -9,6 +9,11 @@ export default defineConfig({
     environment: 'node',
     globals: true,
     include: ['tests/e2e/**/*.spec.ts'],
+    // t5-live-verification.spec.ts needs its own setup (real Gemini calls,
+    // JSX-importing component tests) — it's run separately via
+    // `vitest.config.live.ts` / `npm run test:e2e:live`, never under this
+    // (deliberately mocked/deterministic) config.
+    exclude: ['**/node_modules/**', 'tests/e2e/t5-live-verification.spec.ts'],
     testTimeout: 30_000,
     hookTimeout: 30_000,
     setupFiles: ['tests/e2e/helpers/vitest.setup.ts'],

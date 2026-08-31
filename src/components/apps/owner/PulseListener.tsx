@@ -3,7 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useCallback, useState } from 'react';
 import { Radio } from 'lucide-react';
-import { usePulseChannel, type DealRoomEvent } from '@/app/(apps)/owner/pulse/usePulseChannel';
+import { usePulseChannel, type DealRoomEvent } from '@/app/(apps)/(owner)/owner/pulse/usePulseChannel';
 
 interface PulseListenerProps {
   committeeId: string;

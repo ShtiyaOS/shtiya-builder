@@ -1,3 +1,5 @@
+CREATE EXTENSION IF NOT EXISTS vector;
+ALTER EXTENSION vector SET SCHEMA public;
 -- Migration: 0005_match_trigger
 -- Phase: T4.6 — Agentic: Match — pgvector Embedding Pipeline
 --

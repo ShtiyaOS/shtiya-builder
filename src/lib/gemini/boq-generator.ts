@@ -101,7 +101,7 @@ export interface BoQResult {
 /**
  * generateBoQ
  *
- * Sends a base64-encoded CAD/BIM file (or PDF) to Gemini 1.5 Flash and
+ * Sends a base64-encoded CAD/BIM file (or PDF) to Gemini 3.6 Flash and
  * extracts a structured Bill of Quantities broken down by trade section.
  *
  * For non-visual files (.dwg, .rvt, .ifc), callers should convert to PDF
@@ -126,7 +126,7 @@ export async function generateBoQ(
   }
 
   const model = genAI.getGenerativeModel({
-    model: 'gemini-1.5-flash',
+    model: 'gemini-3.6-flash',
     generationConfig: {
       responseMimeType: 'application/json',
       responseSchema: BOQ_SCHEMA,
@@ -178,7 +178,7 @@ export async function generateBoQ(
  *
  * Flattens a BoQResult into the ScopeLineItem shape used by the Contractor
  * voice-scope page (T3.3), so a BoQ can be handed off as a scope draft
- * consumable by `src/app/(apps)/contractor/scope/new/page.tsx`.
+ * consumable by `src/app/(apps)/(contractor)/contractor/scope/new/page.tsx`.
  */
 export function boqToScopeLineItems(boq: BoQResult): Array<{
   trade: string;

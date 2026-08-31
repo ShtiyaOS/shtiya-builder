@@ -199,7 +199,8 @@ export async function PATCH(request: NextRequest) {
   if (partyIndex === -1) {
     return NextResponse.json({ error: 'User is not a listed party on this agreement.' }, { status: 403 });
   }
-  if (parties[partyIndex].signed_at) {
+  const signingParty = parties[partyIndex];
+  if (signingParty?.signed_at) {
     return NextResponse.json({ error: 'This party has already signed.' }, { status: 409 });
   }
 

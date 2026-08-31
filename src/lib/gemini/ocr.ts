@@ -70,7 +70,7 @@ export interface ProbateData {
 /**
  * extractProbateData
  *
- * Sends a base64-encoded PDF page to Gemini 1.5 Flash and extracts structured
+ * Sends a base64-encoded PDF page to Gemini 3.6 Flash and extracts structured
  * probate data using a strict JSON response schema.
  *
  * @param base64Pdf  Raw base64 string of the PDF (no data-URI prefix needed).
@@ -86,7 +86,7 @@ export async function extractProbateData(
   }
 
   const model = genAI.getGenerativeModel({
-    model: 'gemini-1.5-flash',
+    model: 'gemini-3.6-flash',
     generationConfig: {
       responseMimeType: 'application/json',
       responseSchema: PROBATE_SCHEMA,

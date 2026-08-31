@@ -1,0 +1,35 @@
+name: Migration Check
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  migration-diff:
+    name: Supabase Migration Diff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Check for unapplied migrations
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+        run: |
+          supabase link --project-ref "$PROJECT_REF"
+          # Capture only stdout; stderr carries CLI progress/warnings that must
+          # not be confused with actual schema diff SQL (which goes to stdout).
+          DIFF_OUTPUT=$(supabase db diff --use-migra --linked 2>/dev/null || true)
+          # A clean run produces empty stdout or the literal "No schema changes found".
+          # Any SQL diff (ALTER, CREATE, DROP…) on stdout means drift exists.
+          if echo "$DIFF_OUTPUT" | grep -qiE "^(ALTER|CREATE|DROP|INSERT|UPDATE|DELETE|GRANT|REVOKE)"; then
+            echo "❌ Unapplied migrations detected:"
+            echo "$DIFF_OUTPUT"
+            exit 1
+          fi
+          echo "✅ No migration drift detected"

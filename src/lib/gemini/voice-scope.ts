@@ -81,7 +81,7 @@ export interface ScopeResult {
 /**
  * transcribeToScope
  *
- * Sends a base64-encoded audio clip to Gemini 1.5 Flash for transcription
+ * Sends a base64-encoded audio clip to Gemini 3.6 Flash for transcription
  * and structured extraction into a line-item construction scope of work.
  *
  * @param base64Audio  Raw base64 string of the audio data (no data-URI prefix).
@@ -98,7 +98,7 @@ export async function transcribeToScope(
   }
 
   const model = genAI.getGenerativeModel({
-    model: 'gemini-1.5-flash',
+    model: 'gemini-3.6-flash',
     generationConfig: {
       responseMimeType: 'application/json',
       responseSchema: SCOPE_SCHEMA,

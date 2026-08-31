@@ -2,7 +2,9 @@
 
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
+import Link from 'next/link';
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
+import { ArrowRight } from 'lucide-react';
 
 // ── Fix broken default marker icons in webpack / Next.js ──────────────────
 // Leaflet resolves icon assets at runtime from a relative path that doesn't
@@ -22,7 +24,15 @@ interface MockProperty {
   status: 'invited' | 'signed' | 'declined' | 'active';
   lat: number;
   lng: number;
+  /** block_committees.id this property belongs to — links to the deal room. */
+  committeeId: string;
 }
+
+// All 5 mock properties share `mock-committee-1` — the same seeded id
+// `owner/block/[id]/page.tsx` and `owner/deal-room/page.tsx` already fall
+// back to when the real DB has no matching row, so the demo flow (map →
+// committee → deal room) works end-to-end without a live database.
+const MOCK_COMMITTEE_ID = 'mock-committee-1';
 
 const MOCK_PROPERTIES: MockProperty[] = [
   {
@@ -32,6 +42,7 @@ const MOCK_PROPERTIES: MockProperty[] = [
     status: 'active',
     lat: 40.8048,
     lng: -73.9514,
+    committeeId: MOCK_COMMITTEE_ID,
   },
   {
     id: '2',
@@ -40,6 +51,7 @@ const MOCK_PROPERTIES: MockProperty[] = [
     status: 'invited',
     lat: 40.8079,
     lng: -73.9498,
+    committeeId: MOCK_COMMITTEE_ID,
   },
   {
     id: '3',
@@ -48,6 +60,7 @@ const MOCK_PROPERTIES: MockProperty[] = [
     status: 'signed',
     lat: 40.8013,
     lng: -73.9446,
+    committeeId: MOCK_COMMITTEE_ID,
   },
   {
     id: '4',
@@ -56,6 +69,7 @@ const MOCK_PROPERTIES: MockProperty[] = [
     status: 'declined',
     lat: 40.8089,
     lng: -73.9524,
+    committeeId: MOCK_COMMITTEE_ID,
   },
   {
     id: '5',
@@ -64,6 +78,7 @@ const MOCK_PROPERTIES: MockProperty[] = [
     status: 'invited',
     lat: 40.8031,
     lng: -73.9527,
+    committeeId: MOCK_COMMITTEE_ID,
   },
 ];
 
@@ -107,6 +122,12 @@ export default function BlockMap() {
                   {property.status}
                 </span>
               </p>
+              <Link
+                href={`/owner/deal-room?committee=${property.committeeId}`}
+                className="inline-flex items-center gap-1 pt-1 text-xs font-medium text-indigo-600 hover:text-indigo-500 hover:underline"
+              >
+                View Deal Room <ArrowRight className="h-3 w-3" />
+              </Link>
             </div>
           </Popup>
         </Marker>

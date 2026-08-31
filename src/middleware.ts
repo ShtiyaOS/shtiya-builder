@@ -37,7 +37,7 @@ export async function middleware(request: NextRequest) {
 
   // Extract the top-level app segment from the URL.
   // e.g. "/capital/draws/123" → "capital"
-  const appSegment = request.nextUrl.pathname.split('/')[1];
+  const appSegment = request.nextUrl.pathname.split('/')[1] ?? '';
 
   const allowedApps = getAllowedApps(profile?.role);
 
@@ -45,7 +45,17 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL('/unauthorized', request.url));
   }
 
-  return response;
+  // Forward the resolved pathname to the Next.js server as a request header
+  // so Server Components (the terminal shell's `(apps)/layout.tsx`) can read
+  // it via `headers()` without needing `usePathname` client-side. Cookies
+  // already staged on `response` (session refresh) are carried over onto
+  // the new response so nothing from the Supabase auth flow above is lost.
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set('x-next-pathname', request.nextUrl.pathname);
+  const finalResponse = NextResponse.next({ request: { headers: requestHeaders } });
+  response.cookies.getAll().forEach((cookie) => finalResponse.cookies.set(cookie));
+
+  return finalResponse;
 }
 
 export const config = {

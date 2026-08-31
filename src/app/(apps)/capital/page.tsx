@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { TrendingUp } from 'lucide-react';
 import Link from 'next/link';
+import { PageContext } from '@/components/layout/PageContext';
 
 // ── Mock data (dev fallback) ──────────────────────────────────────────────────
 const MOCK_DEALS = [
@@ -105,6 +106,8 @@ export default async function CapitalPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
+      <PageContext description="Capital Dashboard — lender draw approval queue and escrow ledger with live Pulse status updates" />
+
       {/* ── Header ────────────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-center gap-3">

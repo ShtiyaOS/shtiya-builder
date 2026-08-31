@@ -15,9 +15,20 @@ import ABI from './abi.json';
  * Never import this file from a 'use client' component.
  */
 
+// ── Typed contract interface ──────────────────────────────────────────────────
+// ethers.Contract carries [key: string]: any, so under noUncheckedIndexedAccess
+// every dynamic method dispatch is possibly-undefined. The interface below
+// narrows the three call sites to definite return types without losing
+// the underlying ethers.Contract instance.
+interface EscrowContract extends ethers.BaseContract {
+  deposit(ledgerId: string, overrides?: { value: bigint }): Promise<ethers.TransactionResponse>;
+  release(ledgerId: string, recipient: string): Promise<ethers.TransactionResponse>;
+  getBalance(ledgerId: string): Promise<bigint>;
+}
+
 // ── Client factory ────────────────────────────────────────────────────────────
 
-function getContract(): ethers.Contract {
+function getContract(): EscrowContract {
   const rpcUrl = process.env.ESCROW_RPC_URL;
   const contractAddress = process.env.ESCROW_CONTRACT_ADDRESS;
   const privateKey = process.env.ESCROW_PRIVATE_KEY;
@@ -30,7 +41,7 @@ function getContract(): ethers.Contract {
 
   const provider = new ethers.JsonRpcProvider(rpcUrl);
   const wallet = new ethers.Wallet(privateKey, provider);
-  return new ethers.Contract(contractAddress, ABI, wallet);
+  return new ethers.Contract(contractAddress, ABI, wallet) as unknown as EscrowContract;
 }
 
 /** Converts a DB ledger UUID to a bytes32 identifier for the contract. */

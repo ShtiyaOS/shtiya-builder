@@ -1,3 +1,5 @@
+@import "mapbox-gl/dist/mapbox-gl.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -24,4 +26,20 @@ body {
   .text-balance {
     text-wrap: balance;
   }
+}
+
+/* Pulse deal-room feed (T5.4) — brief fade+slide-in for newly arrived events. */
+@keyframes fade-in-event {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-event {
+  animation: fade-in-event 0.4s ease-out;
 }

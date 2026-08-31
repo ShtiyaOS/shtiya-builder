@@ -37,6 +37,12 @@ default_pool_size = 20
 # Maximum number of client connections allowed.
 max_client_conn = 100
 
+[db.extensions]
+# pgvector: required for embedding columns on authority_corpus and tenant_corpus (migration 0070).
+vector = true
+# pg_cron: required for discovery_feed refresh (migration 0001) and corpus reverify_due jobs.
+pg_cron = true
+
 [realtime]
 enabled = true
 # Bind realtime via either IPv4 or IPv6. (default: IPv6)

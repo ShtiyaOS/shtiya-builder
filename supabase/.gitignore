@@ -1,0 +1,6 @@
+# Supabase local state — never commit
+.branches/
+.temp/
+
+# Seed file lives separately as a tracked scripts/ file; not here
+seed.sql
