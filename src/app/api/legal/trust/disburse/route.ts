@@ -50,8 +50,14 @@ const TRUST_DEBIT_KINDS = [
 
 type DebitKind = (typeof TRUST_DEBIT_KINDS)[number];
 
-/** debit_kind (payment instrument) → entry_kind (ledger classification). */
-export const ENTRY_KIND_FOR: Record<DebitKind, string> = {
+/**
+ * debit_kind (payment instrument) → entry_kind (ledger classification).
+ *
+ * NOT exported: Next.js validates a route module's export surface, and a
+ * non-route export fails the build with "ENTRY_KIND_FOR is not a valid Route
+ * export field". Nothing imported it.
+ */
+const ENTRY_KIND_FOR: Record<DebitKind, string> = {
   client_disbursement: 'client_disbursement',
   fee_earned_transfer: 'earned_fee_transfer',
   court_filing_fee:    'court_ordered_payment',

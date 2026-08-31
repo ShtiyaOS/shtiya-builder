@@ -13,10 +13,25 @@ import { useTerminalStore } from '@/store/terminalStore';
  * no longer exposes an `ai/react` subpath (that moved with the v5 SDK
  * split). Behaviour is identical to the plan: a `DefaultChatTransport` is
  * configured with `prepareSendMessagesRequest`, which reads
- * `useTerminalStore.getState().context` synchronously at send-time (not at
+ * `useTerminalStore.getState()` synchronously at send-time (not at
  * hook-init time) so the Co-Pilot always sees whatever the Center Pane is
  * currently showing, even though this pane never remounts across
  * navigation. See terminal-layout-plan.md T7.5.
+ *
+ * WHAT IS SENT, AND WHAT IS NOT (Task 3.18)
+ *
+ * The request carries the structured `subject` — a subject kind and an id —
+ * and NOT the prose `context` string it used to send. The route resolves the
+ * subject into a server-computed scope set (I-H15); prose describing the
+ * screen would arrive as untrusted text in the same transcript as the user's
+ * own words, which is the injection I-A6 closes. The prose context still
+ * exists, and still renders in the empty-state hint below, but it stays in the
+ * browser.
+ *
+ * A page that has not called `usePageContext(description, subject)` sends no
+ * subject, and the Co-Pilot answers with the scope_denied fallback rather than
+ * guessing. That is intended: an agent with nothing in scope has nothing it is
+ * entitled to say.
  */
 export function RightSidebar() {
   const [input, setInput] = useState('');
@@ -28,8 +43,8 @@ export function RightSidebar() {
       new DefaultChatTransport({
         api: '/api/copilot',
         prepareSendMessagesRequest: ({ messages }) => {
-          const context = useTerminalStore.getState().context;
-          return { body: { messages, context } };
+          const subject = useTerminalStore.getState().subject;
+          return { body: { messages, subject } };
         },
       }),
   );

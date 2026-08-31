@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
+import { getCurrentProfile } from '@/lib/rbac/current-user';
 import { AppSwitcher } from './AppSwitcher';
 import { LogOut, User } from 'lucide-react';
 
@@ -12,11 +13,13 @@ async function getProfile() {
 
   if (!user) return null;
 
-  const { data: profile } = await supabase
-    .from('users')
-    .select('role, full_name, email')
-    .eq('id', user.id)
-    .single();
+  // See src/lib/rbac/current-user.ts — users.role does not exist and users.id
+  // is not auth.uid(). `role` is kept as the local name so the JSX below is
+  // unchanged.
+  const current = await getCurrentProfile(user.id);
+  const profile = current
+    ? { role: current.platform_role, full_name: current.full_name, email: current.email }
+    : null;
 
   return { user, profile };
 }

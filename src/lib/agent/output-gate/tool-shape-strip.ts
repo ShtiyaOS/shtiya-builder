@@ -20,8 +20,19 @@ const OBJECT_MARKERS = [
   /"name"\s*:[\s\S]*?"arguments"\s*:/,
 ];
 
-/** Paired tag form used by several providers. */
-const TAG_PAIR = /<tool_call>[\s\S]*?<\/tool_call>|<\/?tool_call>/g;
+/**
+ * Tag-shaped call syntax. Providers disagree on the tag name — tool_call,
+ * tool_code, tool_use, function_calls/invoke/parameter — so the name is a
+ * pattern rather than a literal, and both the paired form and an orphaned
+ * opening or closing tag are removed. An orphan matters as much as a pair: a
+ * lone `</tool_code>` left in prose is still a model narrating its plumbing,
+ * and it is still something a downstream parser may try to read.
+ */
+const TAG_NAME = '(?:tool_[a-z_]+|function_calls?|invoke|parameter|antml:[a-z_]+)';
+const TAG_PAIR = new RegExp(
+  `<${TAG_NAME}\\b[^>]*>[\\s\\S]*?<\\/${TAG_NAME}>|<\\/?${TAG_NAME}\\b[^>]*\\/?>`,
+  'gi',
+);
 
 /**
  * Finds the object literal enclosing `index` and returns [start, end) of its

@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { isDemoMode, isMissingFunction } from './demo-mode';
 
 export type SubjectKind =
   | 'property' | 'deal' | 'facility' | 'matter'
@@ -68,6 +69,14 @@ export async function buildScopeSet(params: {
     p_kind: subjectKind,
     p_id:   subjectId,
   });
+  // DEMO MODE. subject_party_for() is not deployed to this database, so the
+  // party question cannot be ASKED — which is not the same as it being answered
+  // "no". See src/lib/agent/demo-mode.ts for why that distinction is the whole
+  // safety argument. A deployed function that refuses still refuses below.
+  if (partyErr && isMissingFunction(partyErr) && isDemoMode()) {
+    return demoScopeSet({ subjectKind, subjectId, userId, supabase });
+  }
+
   if (partyErr || isParty !== true) return deny('not_a_party');
 
   // The closed set itself (I-H15).
@@ -78,6 +87,9 @@ export async function buildScopeSet(params: {
   });
 
   if (scopeErr) {
+    if (isMissingFunction(scopeErr) && isDemoMode()) {
+      return demoScopeSet({ subjectKind, subjectId, userId, supabase });
+    }
     // The party check above already passed, so a refusal here is not about this
     // user's rights — it is a client with no session.
     return deny(
@@ -104,6 +116,62 @@ export async function buildScopeSet(params: {
     denied:       false,
     allowedPaths,
     jurisdiction: (jurisdiction as string | null) ?? null,
+    orgId:        (fm as { firm_id: string } | null)?.firm_id ?? null,
+    subjectKind,
+    subjectId,
+  };
+}
+
+/**
+ * The scope set used when the real resolver is not deployed (demo mode only).
+ *
+ * It grants ONE subtree — the subject the caller actually asked about — plus
+ * the public legal root for that subject's jurisdiction. It is deliberately
+ * narrower than a real scope set: no org lineage, no scope templates, no
+ * cross-subject inheritance. The planner still selects only from this list and
+ * the supervisor still discards any plan reaching outside it, so the I-H16
+ * machinery on display is the real one, running against a smaller closed set.
+ *
+ * The jurisdiction is read from the SUBJECT ROW wherever one is reachable
+ * (HV-30), never from the query, and falls back to US-NY only when the subject
+ * carries none.
+ */
+async function demoScopeSet(params: {
+  subjectKind: SubjectKind;
+  subjectId:   string;
+  userId:      string;
+  supabase:    SupabaseClient;
+}): Promise<ScopeSet> {
+  const { subjectKind, subjectId, userId, supabase } = params;
+
+  let jurisdiction: string | null = null;
+
+  if (subjectKind === 'property') {
+    const { data } = await supabase
+      .from('properties').select('jurisdiction_id').eq('id', subjectId).maybeSingle();
+    jurisdiction = (data as { jurisdiction_id: string | null } | null)?.jurisdiction_id ?? null;
+  } else if (subjectKind === 'matter') {
+    const { data } = await supabase
+      .from('matters').select('jurisdiction').eq('id', subjectId).maybeSingle();
+    jurisdiction = (data as { jurisdiction: string | null } | null)?.jurisdiction ?? null;
+  }
+
+  jurisdiction = jurisdiction ?? 'US-NY';
+
+  const { data: fm } = await supabase
+    .from('firm_members').select('firm_id').eq('user_id', userId).limit(1).maybeSingle();
+
+  const subjectRoot = ['ROOT', 'Subject', subjectKind, subjectId.replace(/-/g, '_')].join('.');
+  const lawRoot     = ['ROOT', 'Law', jurisdiction.replace(/-/g, '.')].join('.');
+
+  console.warn('[scope-set] DEMO MODE scope set issued', {
+    subjectKind, subjectId, jurisdiction,
+  });
+
+  return {
+    denied:       false,
+    allowedPaths: [subjectRoot, lawRoot],
+    jurisdiction,
     orgId:        (fm as { firm_id: string } | null)?.firm_id ?? null,
     subjectKind,
     subjectId,

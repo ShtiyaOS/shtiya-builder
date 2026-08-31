@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { getAllowedApps } from '@/lib/rbac/roles';
+import { getCurrentProfile } from '@/lib/rbac/current-user';
 
 /**
  * Root page — session-aware router.
@@ -20,14 +21,17 @@ export default async function RootPage() {
     redirect('/login');
   }
 
-  const { data: profile } = await supabase
-    .from('users')
-    .select('role')
-    .eq('id', user.id)
-    .single();
+  // See src/lib/rbac/current-user.ts. The old query read users.role — a column
+  // that does not exist — keyed on users.id, which is not auth.uid().
+  const profile = await getCurrentProfile(user.id);
+  const allowedApps = getAllowedApps(profile?.platform_role);
 
-  const allowedApps = getAllowedApps(profile?.role);
-  const destination = allowedApps[0] ?? '/login';
+  // getAllowedApps returns BARE SEGMENTS ('owner'), so the leading slash is
+  // added here. The previous fallback put a already-rooted '/login' through the
+  // same interpolation and produced '//login' — which a browser reads as the
+  // protocol-relative URL http://login/, not a path on this host, and which
+  // therefore 404s instead of reaching the login page.
+  const segment = allowedApps[0];
 
-  redirect(`/${destination}`);
+  redirect(segment ? '/' + segment : '/unauthorized');
 }

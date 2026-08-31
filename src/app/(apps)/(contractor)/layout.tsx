@@ -1,7 +1,10 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
+import { getCurrentProfile } from '@/lib/rbac/current-user';
+import { getAllowedApps } from '@/lib/rbac/roles';
 
-const ALLOWED_ROLES = new Set(['contractor', 'architect', 'admin']);
+/** Decided by the same map the middleware and left nav use. */
+const APP_SEGMENT = 'contractor';
 
 /**
  * Zero-Trust route-group guard for every `(contractor)` page (e.g.
@@ -23,13 +26,9 @@ export default async function ContractorLayout({ children }: { children: React.R
     redirect('/login');
   }
 
-  const { data: profile } = await supabase
-    .from('users')
-    .select('role')
-    .eq('id', user.id)
-    .single();
+  const profile = await getCurrentProfile(user.id);
 
-  if (!profile?.role || !ALLOWED_ROLES.has(profile.role)) {
+  if (!getAllowedApps(profile?.platform_role).includes(APP_SEGMENT)) {
     redirect('/unauthorized');
   }
 

@@ -1,7 +1,7 @@
 'use client';
 
 import { useLayoutEffect } from 'react';
-import { useTerminalStore } from '@/store/terminalStore';
+import { useTerminalStore, type TerminalSubject } from '@/store/terminalStore';
 
 /**
  * usePageContext — broadcasts a page's semantic context into the terminal
@@ -19,12 +19,29 @@ import { useTerminalStore } from '@/store/terminalStore';
  * not an empty string.
  *
  * See terminal-layout-plan.md T7.8.
+ *
+ * The optional `subject` is what actually reaches the Co-Pilot's API route: a
+ * structured {kind, id} reference the server turns into a closed scope set. The
+ * `description` never leaves the browser. A page that passes no subject leaves
+ * the Co-Pilot with nothing in scope, and it answers with the scope_denied
+ * fallback rather than guessing what the screen is about.
  */
-export function usePageContext(description: string) {
+export function usePageContext(description: string, subject?: TerminalSubject) {
   const setContext = useTerminalStore((s) => s.setContext);
+  const setSubject = useTerminalStore((s) => s.setSubject);
+
+  // Destructured so the effect depends on the two primitives rather than on a
+  // fresh object literal, which most callers will pass inline and which would
+  // otherwise re-run the effect on every render.
+  const subjectKind = subject?.kind;
+  const subjectId   = subject?.id;
 
   useLayoutEffect(() => {
     setContext(description);
-    return () => setContext('');
-  }, [description, setContext]);
+    setSubject(subjectKind && subjectId ? { kind: subjectKind, id: subjectId } : null);
+    return () => {
+      setContext('');
+      setSubject(null);
+    };
+  }, [description, subjectKind, subjectId, setContext, setSubject]);
 }

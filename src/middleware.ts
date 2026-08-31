@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createMiddlewareClient } from '@/lib/supabase/middleware';
 import { getAllowedApps } from '@/lib/rbac/roles';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 /**
  * Next.js Edge Middleware — session refresh + RBAC enforcement.
@@ -29,17 +30,37 @@ export async function middleware(request: NextRequest) {
   }
 
   // Resolve the user's role from the public.users table.
-  const { data: profile } = await supabase
+  //
+  // TWO CORRECTIONS, both measured against the live database:
+  //   - the column is `platform_role`. `users.role` does not exist, so the old
+  //     query errored, profile came back null, and getAllowedApps(undefined)
+  //     returned [] — sending EVERY authenticated user to /unauthorized on
+  //     EVERY app route.
+  //   - the row is keyed by `auth_user_id`, not `id`. users.id is a surrogate
+  //     key; auth.uid() matches auth_user_id. Same bug as the copilot route.
+  //
+  // maybeSingle() rather than single(): a user with no profile row is a normal
+  // state (redirect to /unauthorized), not an exception to throw in middleware.
+  // Read on the SERVICE client. The RLS policies on users are written against
+  // the row's own id, so a session client cannot read the row that states its
+  // own role — measured: this lookup returned null for a valid session and sent
+  // the user to /unauthorized.
+  //
+  // This is not a privilege escalation. The filter is the auth.uid() that
+  // getUser() just verified against the Auth server, so exactly one row can
+  // come back — the caller's own. The RBAC decision itself is still made below,
+  // in code, from that role.
+  const { data: profile } = await createAdminClient()
     .from('users')
-    .select('role')
-    .eq('id', user.id)
-    .single();
+    .select('platform_role')
+    .eq('auth_user_id', user.id)
+    .maybeSingle();
 
   // Extract the top-level app segment from the URL.
   // e.g. "/capital/draws/123" → "capital"
   const appSegment = request.nextUrl.pathname.split('/')[1] ?? '';
 
-  const allowedApps = getAllowedApps(profile?.role);
+  const allowedApps = getAllowedApps(profile?.platform_role);
 
   if (!allowedApps.includes(appSegment)) {
     return NextResponse.redirect(new URL('/unauthorized', request.url));

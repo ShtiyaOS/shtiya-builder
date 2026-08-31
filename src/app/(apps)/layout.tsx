@@ -1,5 +1,6 @@
 import { headers } from 'next/headers';
 import { createClient } from '@/lib/supabase/server';
+import { getCurrentProfile } from '@/lib/rbac/current-user';
 import { LeftSidebar } from '@/components/layout/LeftSidebar';
 import { RightSidebar } from '@/components/layout/RightSidebar';
 
@@ -29,12 +30,8 @@ export default async function AppsLayout({ children }: { children: React.ReactNo
 
   let role: string | null = null;
   if (user) {
-    const { data: profile } = await supabase
-      .from('users')
-      .select('role')
-      .eq('id', user.id)
-      .single();
-    role = profile?.role ?? null;
+    const profile = await getCurrentProfile(user.id);
+    role = profile?.platform_role ?? null;
   }
 
   // No session — render children as-is (auth pages own their own layout).

@@ -135,6 +135,32 @@ describe('runOutputGate', () => {
     expect(result.telemetry.exfil_matches).toBe(1);
   });
 
+  it('redacts an email address, a phone number and a UUID reaching the client (I-A16)', async () => {
+    const result = await run({
+      content:
+        'Write counsel@example.com or call 212-555-0147 about chunk ' +
+        '3f2504e0-4f89-11d3-9a0c-0305e82c3301.',
+      citations: [citation],
+    });
+
+    expect(result.content).not.toContain('counsel@example.com');
+    expect(result.content).not.toContain('212-555-0147');
+    expect(result.content).not.toContain('3f2504e0');
+    expect(result.gates.exfil_strip_applied).toBe(true);
+    expect(result.telemetry.exfil_matches).toBe(3);
+  });
+
+  it('strips a stray tool_code block before the response streams (I-A3)', async () => {
+    const result = await run({
+      content: 'CPLR 3212 governs. <tool_code>search("3212")</tool_code> The movant bears the burden.',
+      citations: [citation],
+    });
+
+    expect(result.gates.tool_shape_strip_applied).toBe(true);
+    expect(result.content).not.toContain('tool_code');
+    expect(result.content).toContain('CPLR 3212 governs.');
+  });
+
   it('redacts a raw vault storage path (I-A16)', async () => {
     const result = await run({ content: 'See /vault-raw/org-1/secret.pdf for detail.', citations: [citation] });
     expect(result.content).not.toContain('/vault-raw/');

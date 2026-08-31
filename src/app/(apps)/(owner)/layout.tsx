@@ -1,7 +1,17 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
+import { getCurrentProfile } from '@/lib/rbac/current-user';
+import { getAllowedApps } from '@/lib/rbac/roles';
 
-const ALLOWED_ROLES = new Set(['owner', 'investor', 'admin']);
+/**
+ * The app segment this route group owns. Membership is decided by the SAME map
+ * the middleware and the left nav use, rather than by a private role list.
+ *
+ * The old private list held v1 role names ('owner', 'investor', 'admin') and
+ * was checked against a `users.role` column that no longer exists, so it
+ * refused every user — including the ones the nav was linking here.
+ */
+const APP_SEGMENT = 'owner';
 
 /**
  * Zero-Trust route-group guard for every `(owner)` page (e.g. `/owner`,
@@ -23,13 +33,9 @@ export default async function OwnerLayout({ children }: { children: React.ReactN
     redirect('/login');
   }
 
-  const { data: profile } = await supabase
-    .from('users')
-    .select('role')
-    .eq('id', user.id)
-    .single();
+  const profile = await getCurrentProfile(user.id);
 
-  if (!profile?.role || !ALLOWED_ROLES.has(profile.role)) {
+  if (!getAllowedApps(profile?.platform_role).includes(APP_SEGMENT)) {
     redirect('/unauthorized');
   }
 

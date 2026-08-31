@@ -8,6 +8,7 @@ import { checkEntailment }   from './entailment-check';
 import { checkJurisdiction } from './jurisdiction-check';
 import { stripExfil }        from './exfil-strip';
 import { stripToolShapes }   from './tool-shape-strip';
+import { isDemoMode }        from '../demo-mode';
 
 export type { ValidCitation } from './citation-check';
 
@@ -21,6 +22,13 @@ export interface GateResult {
   content:   string;
   citations: ValidCitation[];
   fallback?: FallbackKey;
+  /**
+   * False when the answer survived only because demo mode let an UNCITED
+   * response past the citation gate. The UI must say so on screen — an
+   * ungrounded answer that looks identical to a grounded one is the exact
+   * failure I-A11 exists to prevent. True on every normal path.
+   */
+  grounded: boolean;
   gates: {
     citation_passed:          boolean;
     entailment_passed:        boolean;
@@ -80,12 +88,12 @@ export async function runOutputGate(params: {
   // A denied scope never reaches a model, but if one does, it does not get an
   // answer here either.
   if (scopeSet.denied) {
-    return { content: '', citations: [], fallback: 'scope_denied', gates, telemetry };
+    return { content: '', citations: [], fallback: 'scope_denied', gates, telemetry, grounded: true };
   }
 
   // The supervisor already decided it had nothing groundable to say.
   if (raw.fallback) {
-    return { content: '', citations: [], fallback: raw.fallback, gates, telemetry };
+    return { content: '', citations: [], fallback: raw.fallback, gates, telemetry, grounded: true };
   }
 
   // Gate 1 — Citation (I-A11, I-H15)
@@ -93,12 +101,43 @@ export async function runOutputGate(params: {
   telemetry.citations_out_of_scope = citationResult.out_of_scope_count;
   telemetry.citations_not_live     = citationResult.not_live_count;
 
-  if (!citationResult.passed) {
+  // DEMO MODE. authority_corpus and tenant_corpus are empty in this database,
+  // so there is nothing for any answer to cite and this gate refuses every turn.
+  // Rather than skip the gate, the answer is routed PAST gate 1 only, carried
+  // through gates 4 and 5 unchanged, and returned with grounded:false so the UI
+  // states plainly that nothing backs it. Load the corpus and this branch stops
+  // being reachable on its own.
+  const demoUngrounded = !citationResult.passed && isDemoMode() && raw.content.trim() !== '';
+
+  if (!citationResult.passed && !demoUngrounded) {
     return {
       content: '', citations: [],
       fallback: citationResult.fallback ?? 'no_authority_on_point',
-      gates, telemetry,
+      gates, telemetry, grounded: true,
     };
+  }
+
+  if (demoUngrounded) {
+    console.warn('[output-gate] DEMO MODE: releasing an UNCITED answer (grounded=false)');
+
+    // Gates 4 and 5 still run. They are the two that protect the reader rather
+    // than the argument, and they are never relaxed.
+    const exfil = stripExfil(raw.content);
+    gates.exfil_strip_applied = exfil.triggered;
+    telemetry.exfil_matches   = exfil.match_count;
+
+    const tools = stripToolShapes(exfil.content);
+    gates.tool_shape_strip_applied = tools.triggered;
+
+    if (tools.fallback || tools.content.trim() === '') {
+      return {
+        content: '', citations: [],
+        fallback: tools.fallback ?? 'no_authority_on_point',
+        gates, telemetry, grounded: true,
+      };
+    }
+
+    return { content: tools.content, citations: [], gates, telemetry, grounded: false };
   }
   gates.citation_passed = true;
 
@@ -110,7 +149,7 @@ export async function runOutputGate(params: {
   if (entailmentResult.fallback) {
     return {
       content: '', citations: citationResult.citations,
-      fallback: entailmentResult.fallback, gates, telemetry,
+      fallback: entailmentResult.fallback, gates, telemetry, grounded: true,
     };
   }
   gates.entailment_passed = true;
@@ -128,7 +167,7 @@ export async function runOutputGate(params: {
   if (finalCitations.length === 0) {
     return {
       content: '', citations: [],
-      fallback: 'no_authority_on_point', gates, telemetry,
+      fallback: 'no_authority_on_point', gates, telemetry, grounded: true,
     };
   }
 
@@ -145,7 +184,7 @@ export async function runOutputGate(params: {
   if (toolResult.fallback) {
     return {
       content: '', citations: finalCitations,
-      fallback: toolResult.fallback, gates, telemetry,
+      fallback: toolResult.fallback, gates, telemetry, grounded: true,
     };
   }
 
@@ -153,9 +192,9 @@ export async function runOutputGate(params: {
   if (content.trim() === '') {
     return {
       content: '', citations: finalCitations,
-      fallback: 'no_authority_on_point', gates, telemetry,
+      fallback: 'no_authority_on_point', gates, telemetry, grounded: true,
     };
   }
 
-  return { content, citations: finalCitations, gates, telemetry };
+  return { content, citations: finalCitations, gates, telemetry, grounded: true };
 }

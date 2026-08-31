@@ -1,10 +1,13 @@
-import OpenAI from 'openai';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ScopeSet } from './scope-set';
 import type { FallbackKey } from './fallback-templates';
 import type { AgentType } from './prompts/index';
 import { AGENT_PROMPTS } from './prompts/index';
 import type { ValidCitation } from './output-gate/index';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { retrieveAuthorityCitations } from './worker/authority-retriever';
+import { retrieveTenantCitations } from './worker/tenant-retriever';
+import { callGemini } from './gemini-client';
 
 /**
  * The supervisor: turns one user turn into a PLAN, then refuses to execute any
@@ -20,7 +23,45 @@ import type { ValidCitation } from './output-gate/index';
  * impossible is to have no template literals in the file at all.
  */
 
-const SUPERVISOR_MODEL = 'gpt-4o';
+/**
+ * Appended to the agent's reviewed prompt to describe the PLAN SHAPE the
+ * planner must emit. It is a static constant carrying no request input, so
+ * -- I-A6 holds: nothing the caller sends reaches the system instruction.
+ *
+ * It is a separate constant rather than part of each of the ten prompts
+ * because the plan schema is a property of the supervisor, not of any one
+ * agent's duties.
+ */
+const PLANNER_DIRECTIVE = [
+  '',
+  '---',
+  'PLANNING MODE. Reply with a JSON object and nothing else:',
+  '{"tasks":[{"task_id":"<uuid>","task_kind":"authority_retrieval|tenant_retrieval|synthesis",',
+  '"target_paths":["<one of the scope.allowedPaths given to you, copied EXACTLY>"],',
+  '"query":"<what to search for, or for synthesis the question to answer>"}]}',
+  'You MUST copy target_paths verbatim from scope.allowedPaths. Never invent,',
+  'extend, or guess a path: a plan containing any path not in that list is',
+  'discarded in full and the user gets no answer. Always include exactly one',
+  'synthesis task last, whose query restates the user question.',
+].join('\n');
+
+/**
+ * Appended for the SYNTHESIS pass. Also static, also carrying no request input.
+ *
+ * -- I-A11 is stated to the model as well as enforced after it. The Output Gate
+ * is the thing that actually holds the line, but a model told to ground its
+ * answer produces less for the gate to strip.
+ */
+const SYNTHESIS_DIRECTIVE = [
+  '',
+  '---',
+  'ANSWERING MODE. Answer the question in the user payload.',
+  'Ground every factual claim in the supplied citations and refer to them by',
+  'their instrument name. If the citations do not support an answer, say so',
+  'plainly rather than filling the gap from memory.',
+  'Write prose for a professional reader. Never emit JSON, XML, tool-call',
+  'syntax, email addresses, phone numbers, or internal identifiers.',
+].join('\n');
 
 const TASK_KINDS = ['authority_retrieval', 'tenant_retrieval', 'synthesis'] as const;
 export type TaskKind = (typeof TASK_KINDS)[number];
@@ -108,28 +149,30 @@ async function callSupervisorLLM(params: {
     requestId,
   });
 
-  // Constructed per call, not at module load: the key is read when it is used,
-  // and nothing is instantiated merely by importing this module.
-  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
+  // callGemini() is written not to throw, but the try/catch stays: a planner
+  // that fails in an unforeseen way must still produce NO plan rather than an
+  // exception that escapes to the route. Fail closed includes failing closed on
+  // surprises.
+  let raw: string | null = null;
   try {
-    const completion = await client.chat.completions.create({
-      model: SUPERVISOR_MODEL,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: AGENT_PROMPTS[agentType] },
-        { role: 'user',   content: userContent },
-      ],
+    raw = await callGemini({
+      systemPrompt: AGENT_PROMPTS[agentType] + PLANNER_DIRECTIVE,
+      userContent,
+      json: true,
     });
-
-    const choice = completion?.choices?.[0];
-    return parsePlan(choice?.message?.content ?? null);
   } catch (err) {
-    // A planner that cannot be reached produces no plan. It does not produce a
-    // permissive one.
     console.error('[supervisor] planner call failed', { requestId, err });
     return { tasks: [] };
   }
+
+  if (raw === null) {
+    // A planner that cannot be reached produces no plan. It does not produce a
+    // permissive one.
+    console.error('[supervisor] planner call failed', { requestId });
+    return { tasks: [] };
+  }
+
+  return parsePlan(raw);
 }
 
 /**
@@ -224,19 +267,123 @@ export async function supervisorRoute(params: {
     return { content: '', citations: [], fallback: 'no_authority_on_point' };
   }
 
-  // 4 — Worker dispatch. The retrieval workers land in Task 3.16; until then
-  // these stubs return no citations, so a synthesis string produced here is
-  // ungrounded and the Output Gate will refuse it. That is the correct interim
-  // behaviour, not a gap to paper over.
-  const retrievalTasks = plan.tasks.filter(t => t.task_kind !== 'synthesis');
-  const workerResults = await Promise.all(
-    retrievalTasks.map(_task => Promise.resolve([] as ValidCitation[])),
-  );
+  // 4 — Worker dispatch.
+  //
+  // Two clients, on purpose, and the choice is per-corpus rather than per-call:
+  //
+  //   authority_retrieval runs on a SERVICE-ROLE client. Public legal authority
+  //   is not tenant data, and I-A10 makes a vector search impossible on a
+  //   session connection — see the header of worker/authority-retriever.ts for
+  //   the full I-A10 / I-H14 argument. The tier is pinned to 'public' inside
+  //   the SQL function, not here.
+  //
+  //   tenant_retrieval runs on the CALLER'S client. tc_read_v2 and the
+  //   RESTRICTIVE tc_wall_override are the authorization boundary for that
+  //   corpus, and they only run when the connection is the caller's.
+  //
+  // The service-role client is constructed lazily, so a plan with no authority
+  // task never instantiates one and a missing service-role key is an error only
+  // for the requests that actually need it.
+  const authorityTasks = plan.tasks.filter(t => t.task_kind === 'authority_retrieval');
+  const tenantTasks    = plan.tasks.filter(t => t.task_kind === 'tenant_retrieval');
+
+  let adminClient: SupabaseClient | null = null;
+  if (authorityTasks.length > 0) {
+    try {
+      adminClient = createAdminClient() as unknown as SupabaseClient;
+    } catch (err) {
+      // No service-role key configured. The authority half of the plan simply
+      // yields nothing; the Output Gate then refuses an uncited answer rather
+      // than this function inventing one.
+      console.error('[supervisor] service-role client unavailable', { requestId, err });
+    }
+  }
+
+  const workerResults = await Promise.all([
+    ...authorityTasks.map(task =>
+      adminClient === null
+        ? Promise.resolve([] as ValidCitation[])
+        : retrieveAuthorityCitations(task, adminClient)),
+    ...tenantTasks.map(task => retrieveTenantCitations(task, supabase)),
+  ]);
   const allCitations = workerResults.flat();
 
-  // 5
-  return {
-    content:   plan.tasks.find(t => t.task_kind === 'synthesis')?.query ?? '',
-    citations: allCitations,
-  };
+  // 5 — Synthesis.
+  //
+  // Until now this returned the planner's synthesis QUERY as the answer, which
+  // is an instruction to answer, not an answer. That made the whole pipeline
+  // incapable of producing content no matter how well retrieval went. The
+  // second model pass below is what turns validated citations into prose.
+  //
+  // -- I-A6 again: the citations travel as a STRUCTURED JSON payload in the
+  // user turn. They are not pasted into the system instruction, and the system
+  // instruction remains the reviewed constant plus a static directive.
+  const synthesisTask = plan.tasks.find(t => t.task_kind === 'synthesis');
+  const question = synthesisTask?.query ?? lastUserTurn;
+
+  const answer = await callGemini({
+    systemPrompt: AGENT_PROMPTS[agentType] + SYNTHESIS_DIRECTIVE,
+    userContent: JSON.stringify({
+      question,
+      jurisdiction: scopeSet.jurisdiction,
+      citations: allCitations.map(c => ({
+        instrument: c.instrument,
+        as_of:      c.as_of,
+        text:       c.text,
+      })),
+    }),
+  });
+
+  if (answer === null) {
+    // The model could not be reached. That is silence, and silence gets a
+    // fallback key rather than an empty bubble (I-A11).
+    return { content: '', citations: [], fallback: 'no_authority_on_point' };
+  }
+
+  // The reviewed prompts instruct the model, in their own words, to "respond:
+  // no_authority_on_point" when it cannot ground a claim. That is a KEY, not an
+  // answer — passing it through as prose shows the reader a raw enum value
+  // where the fallback template belongs, and FL-3 exists precisely so those
+  // templates say different things. Measured: a live turn returned the bare
+  // string 'no_authority_on_point' to the client.
+  const declared = asFallbackKey(answer);
+  if (declared) {
+    return { content: '', citations: [], fallback: declared };
+  }
+
+  return { content: answer, citations: allCitations };
+}
+
+/**
+ * Recognises a response that is a fallback KEY rather than an answer.
+ *
+ * Deliberately narrow. It fires only when the key is essentially the WHOLE
+ * response — a genuine answer that happens to discuss one of these terms at
+ * length must not be swallowed, because turning a real answer into a refusal is
+ * the more damaging error of the two.
+ */
+function asFallbackKey(text: string): FallbackKey | null {
+  const keys: FallbackKey[] = ['no_authority_on_point', 'coverage_incomplete', 'scope_denied'];
+
+  // Strip quotes, list bullets, trailing punctuation and any leading label the
+  // model may have added ("Response:", "Answer -", and so on).
+  const cleaned = text
+    .trim()
+    .replace(/^[\s>*\-#"']+/, '')
+    .replace(/^[A-Za-z ]{0,12}[:\-—]\s*/, '')
+    .replace(/["'.\s]+$/, '')
+    .toLowerCase();
+
+  for (const key of keys) {
+    if (cleaned === key) return key;
+  }
+
+  // A very short response that is nothing but a key plus a few filler words.
+  if (cleaned.length <= 60) {
+    for (const key of keys) {
+      if (new RegExp('(^|\\W)' + key + '($|\\W)').test(cleaned)) return key;
+    }
+  }
+
+  return null;
 }
